@@ -1,2 +1,3 @@
+
 build objects(.build/*): auto *.c
 build application(.build/app): auto objects(.build/*)

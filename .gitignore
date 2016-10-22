@@ -1,0 +1,6 @@
+.build/
+build.*
+!build.fox
+Makefile
+.ninja_*
+compiler.c
