@@ -1,67 +1,98 @@
 #include "vm.h"
 
-#include <stdio.h>
+void vm_reset(vm_t * vm) {memset(vm, 0, sizeof(vm_t));}
 
-void vm_load(vm_t * vm, const char * filename)
+// TODO bound checks here
+#define OP		img[vm->ip++]		// returns current op and increases ip
+#define TOS		vm->st[vm->sp]		// top of stack
+#define NOS		vm->st[vm->sp - 1]	// next top of stack
+#define TORS	vm->st[vm->sp]		// top of return stack
+#define SINC	vm->sp++			// stack push
+#define SDEC	vm->sp--			// stack pop
+#define RSINC	vm->rp++			// return stack push
+#define RSDEC	vm->rp--			// return stack pop
+
+bool vm_tick(vm_t * vm, int32_t * img)
 {
-	memset(vm, 0, sizeof(vm_t));
-
-	FILE * f = fopen(filename, "rb");
-
-	fseek(f, 0, SEEK_END);
-	size_t s = ftell(f);
-	fseek(f, 0, SEEK_SET);
-
-	fread(vm->code, 1, s, f);
-
-	fclose(f);
-}
-
-static int32_t * _sp(vm_t * vm, int32_t pos) {return vm->st + vm->sp + pos - 1;}
-static int32_t * _rp(vm_t * vm, int32_t pos) {return vm->rs + vm->rp + pos - 1;}
-
-bool vm_tick(vm_t * vm)
-{
-	int32_t * c = vm->code + (vm->ip++);
-	switch(*c)
+	int32_t c = OP;
+	switch(c)
 	{
-	case op_stop:  return false;
-	case op_push:  vm->sp++; *_sp(vm, 0) = vm->code[vm->ip++]; break;
-	case op_drop:  vm->sp--; break;
-	case op_plus:  *_sp(vm, -1) = *_sp(vm, -1) + *_sp(vm, 0); vm->sp--; break;
-	case op_minus: *_sp(vm, -1) = *_sp(vm, -1) - *_sp(vm, 0); vm->sp--; break;
+	// vm control
+	case op_nop:	break;
+	case op_stop:	vm->ip--; return false; // make sure we stay on this instruction
+
+	// data stack
+	case op_lit:	SINC; TOS = OP; break;
+	case op_dup:	SINC; TOS = NOS; break;
+	case op_drop:	SDEC; break;
+	case op_swap:	int32_t t = TOS; TOS = NOS; NOS = t; break;
+
+	// return stack
+	case op_push:	RSINC; TORS = TOS; SDEC; break;
+	case op_pop:	SINC; TOS = TORS; RSDEC; break;
+
+	// flow control
+	case op_jmp:
+		vm->ip = TOS; SDEC;		// jump without preserving ip
+		break;
 	case op_call:
-		vm->rp++; *_rp(vm, 0) = vm->ip;
-		vm->ip = *_sp(vm, 0); vm->sp--;
+		RSINC; TORS = vm->ip;	// push current ip to return stack
+		vm->ip = TOS; SDEC;		// jump to a new location
 		break;
-	case op_return:
-		vm->ip = *_rp(vm, 0); vm->rp--;
-		break;
-	case op_syscall:
-		switch(*_sp(vm, 0))
+	case op_ccall:
+	{
+		int32_t n = TOS; SDEC; // addr
+		int32_t c = TOS; SDEC; // cond
+		if(c != 0)
 		{
-		case 0:  printf(">%i\n", *_sp(vm, -1)); break;
-		default: break;
+			RSINC; TORS = vm->ip;	// push current ip to return stack
+			vm->ip = n;				// jump to a new location
 		}
-		vm->sp -= 2;
+		break;
+	}
+	case op_return:
+		vm->ip = TORS; RSDEC; // restore ip to prev location
+		break;
+
+	// memory control
+	case op_fetch:	TOS = vm->mem[TOS]; break;
+	case op_store:	vm->mem[TOS] = NOS; SDEC; SDEC; break;
+
+	// integer ops
+	case op_i_plus:		NOS = NOS + TOS; SDEC; break;
+	case op_i_minus:	NOS = NOS - TOS; SDEC; break;
+	case op_i_mul:		NOS = NOS * TOS; SDEC; break;
+	case op_i_divmod:	{int32_t a = NOS; int32_t b = TOS; NOS = a / b; TOS = a % b; break; }
+	case op_i_eq:		NOS = (NOS == TOS ? -1 : 0); SDEC; break;
+	case op_i_neq:		NOS = (NOS != TOS ? -1 : 0); SDEC; break;
+	case op_i_lt:		NOS = (NOS <  TOS ? -1 : 0); SDEC; break;
+	case op_i_gt:		NOS = (NOS >  TOS ? -1 : 0); SDEC; break;
+
+	// binary ops
+	case op_b_and:		NOS = NOS & TOS; SDEC; break;
+	case op_b_or:		NOS = NOS | TOS; SDEC; break;
+	case op_b_xor:		NOS = NOS ^ TOS; SDEC; break;
+	case op_b_shift:	NOS = (TOS > 0) ? (NOS << TOS) : (NOS >> -TOS); SDEC; break;
+
+	// io
+	case op_syscall0:
+	case op_syscall1:
+	case op_syscall2:
+	case op_syscall3:
+	case op_syscall4:
+	case op_syscall5:
+	{
+		uint8_t count = c - op_syscall0;
+		int32_t number = TOS; SDEC;
+		int32_t arg[5] = {0};
+		for(uint8_t i = 0; i < count; ++i)
+			arg[count - i - 1] = TOS; SDEC;
+		vm->syscall(number, arg[0], arg[1], arg[2], arg[3], arg[3], vm->syscall_context);
+		break;
+	}
+	// unknown
 	default:
 		return false;
 	}
-
-#if 0
-	if(vm->sp)
-	{
-		printf("  stack:\n");
-		for(size_t i = 0; i < vm->sp; ++i)
-			printf("  %i\n", vm->st[i]);
-	}
-	if(vm->rp)
-	{
-		printf("  return stack:\n");
-		for(size_t i = 0; i < vm->rp; ++i)
-			printf("  %i\n", vm->rs[i]);
-	}
-#endif
-
 	return true;
 }
