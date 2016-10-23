@@ -1,12 +1,17 @@
 #include "vm.h"
 
-void vm_reset(vm_t * vm) {memset(vm, 0, sizeof(vm_t));}
+void vm_reset(vm_t * vm, vm_syscall_cb cb, void * context)
+{
+	memset(vm, 0, sizeof(vm_t));
+	vm->cb = cb;
+	vm->context = context;
+}
 
 // TODO bound checks here
 #define OP		img[vm->ip++]		// returns current op and increases ip
-#define TOS		vm->st[vm->sp]		// top of stack
-#define NOS		vm->st[vm->sp - 1]	// next top of stack
-#define TORS	vm->st[vm->sp]		// top of return stack
+#define TOS		vm->st[vm->sp - 1]	// top of stack
+#define NOS		vm->st[vm->sp - 2]	// next top of stack
+#define TORS	vm->rs[vm->rp - 1]	// top of return stack
 #define SINC	vm->sp++			// stack push
 #define SDEC	vm->sp--			// stack pop
 #define RSINC	vm->rp++			// return stack push
@@ -32,9 +37,21 @@ bool vm_tick(vm_t * vm, int32_t * img)
 	case op_pop:	SINC; TOS = TORS; RSDEC; break;
 
 	// flow control
+	case op_cjmp:
+	{
+		int32_t n = TOS; SDEC; // addr
+		int32_t c = TOS; SDEC; // cond
+		if(c != 0)
+		{
+			vm->ip = n; 		// jump without preserving ip
+		}
+		break;
+	}
 	case op_jmp:
+	{
 		vm->ip = TOS; SDEC;		// jump without preserving ip
 		break;
+	}
 	case op_call:
 		RSINC; TORS = vm->ip;	// push current ip to return stack
 		vm->ip = TOS; SDEC;		// jump to a new location
@@ -80,14 +97,13 @@ bool vm_tick(vm_t * vm, int32_t * img)
 	case op_syscall2:
 	case op_syscall3:
 	case op_syscall4:
-	case op_syscall5:
 	{
 		uint8_t count = c - op_syscall0;
 		int32_t number = TOS; SDEC;
-		int32_t arg[5] = {0};
+		int32_t arg[4] = {0};
 		for(uint8_t i = 0; i < count; ++i)
 			arg[count - i - 1] = TOS; SDEC;
-		vm->syscall(number, arg[0], arg[1], arg[2], arg[3], arg[3], vm->syscall_context);
+		vm->cb(number, arg[0], arg[1], arg[2], arg[3], vm->context);
 		break;
 	}
 	// unknown
