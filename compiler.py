@@ -3,7 +3,8 @@
 from arpeggio import *
 from arpeggio import RegExMatch as _
 def fth_comment():		return _(r"\\.*")
-def fth_word():			return _(r"(?!if|else|then|do|loop)[^:;()\\\s]+(?=\s|$)")
+def fth_word():			return _(r"(?!if|else|then|do|loop|variable)[^:;()\\\s]+(?=\s|$)")
+def fth_variable():		return Kwd("variable"), fth_word
 def fth_call():			return fth_word
 def fth_number():		return _(r"[0-9]+(?=\s|$)")
 def fth_if():			return Kwd("if"), fth_block, Optional( Kwd("else"), fth_block ), Kwd("then")
@@ -12,7 +13,7 @@ def fth_statement():	return [fth_if, fth_do, fth_number, fth_call]
 def fth_block():		return ZeroOrMore(fth_statement)
 def fth_defcmt():		return _(r"\([^\)]*\)")
 def fth_def():			return Kwd(":"), fth_word, fth_defcmt, fth_block, Kwd(";")
-def fth_mainblock():	return ZeroOrMore([fth_def, fth_statement])
+def fth_mainblock():	return ZeroOrMore([fth_variable, fth_def, fth_statement])
 def fth():				return fth_mainblock, EOF
 
 # opcodes
@@ -63,12 +64,14 @@ class FthVisitor(PTNodeVisitor):
 	def __init__(self, **kwargs):
 		self.words = {}
 		self.temp_labels = 0
+		self.variables = {}
+		self.available_memory_pos = 0
 		super(FthVisitor, self).__init__(defaults = False, **kwargs)
 
 	def visit_fth(self, node, children):
 		if len(children) > 1:
 			raise ValueError("grammar error")
-		out = children[0] + [("o", ops["stop"])] # main app blob
+		out = (children[0] if len(children) else []) + [("o", ops["stop"])] # main app blob
 		for k, v in self.words.items():
 			out += v # we place main program first so entry point is always at first instruction
 		return out
@@ -182,8 +185,22 @@ class FthVisitor(PTNodeVisitor):
 		v = str(node)
 		if v in ops:
 			return ("o", ops[v])
+		elif v in self.variables:
+			return ("b", [("o", ops["__lit"]), ("n", self.variables[v])])
 		else:
 			return ("b", [("o", ops["__lit"]), ("r", v), ("o", ops["__call"])])
+
+	def visit_fth_variable(self, node, children):
+		print("wut")
+		if len(children) != 1:
+			raise ValueError("grammar error")
+		v = str(children[0])
+		if v in ops:
+			raise ValueError("please don't use op code names as variables")
+		else:
+			self.variables[v] = self.available_memory_pos
+			self.available_memory_pos += 1
+		return None
 
 	def visit_fth_word(self, node, children):
 		return str(node)
@@ -254,7 +271,6 @@ if args.get("disasm") == True:
 		print(out)
 
 # TODO
-# variables
 # arrays
 # strings
 
