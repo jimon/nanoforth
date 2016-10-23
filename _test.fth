@@ -1,14 +1,7 @@
 
 : cr ( -- ) 0 syscall0 ;
 : . ( n -- ) 1 syscall1 ;
+: r@ ( -- n ) r> r> dup >r swap >r ;
+: i ( -- n ) r> r> dup >r swap >r ;
 
-\ 2 2 - if 2 else 1 if 4 else 5 then then . cr
-
-0 if 2 . cr then
-
-
-\ 1 if 2 . else 3 . then
-
-\ : abc ( asd ) 1 if 2 else 3 then ;
-
-\ abc 1
+5 0 do i . cr loop

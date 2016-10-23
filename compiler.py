@@ -6,10 +6,9 @@ def fth_comment():		return _(r"\\.*")
 def fth_word():			return _(r"(?!if|else|then|do|loop)[^:;()\\\s]+(?=\s|$)")
 def fth_call():			return fth_word
 def fth_number():		return _(r"[0-9]+(?=\s|$)")
-def fth_if():			return Kwd("if"), fth_block, Kwd("else"), fth_block, Kwd("then")
 def fth_if():			return Kwd("if"), fth_block, Optional( Kwd("else"), fth_block ), Kwd("then")
-#def fth_do():			return "do", fth_block, "loop"
-def fth_statement():	return [fth_if, fth_number, fth_call]
+def fth_do():			return Kwd("do"), fth_block, Kwd("loop")
+def fth_statement():	return [fth_if, fth_do, fth_number, fth_call]
 def fth_block():		return ZeroOrMore(fth_statement)
 def fth_defcmt():		return _(r"\([^\)]*\)")
 def fth_def():			return Kwd(":"), fth_word, fth_defcmt, fth_block, Kwd(";")
@@ -139,6 +138,41 @@ class FthVisitor(PTNodeVisitor):
 		else:
 			raise ValueError("grammar error")
 
+	def visit_fth_do(self, node, children):
+		if len(children) != 1:
+			raise ValueError("grammar error")
+
+		l_start = self._get_temp_label("do")
+
+		out = []
+		out.append(("l", l_start))
+		out.append(("o", ops["swap"])) # swap start and end
+		out.append(("o", ops[">r"])) # save end pos
+		out.append(("o", ops[">r"])) # save start pos
+		out.extend(children[0])
+		out.append(("o", ops["r>"])) # restore start pos
+		out.append(("o", ops["r>"])) # restore end pos
+		out.append(("o", ops["swap"])) # swap start and end
+		out.append(("o", ops["__lit"])) # inc iterator
+		out.append(("n", 1))
+		out.append(("o", ops["+"]))
+		out.append(("o", ops["dup"])) # 2dup
+		out.append(("o", ops[">r"]))
+		out.append(("o", ops["swap"]))
+		out.append(("o", ops["dup"]))
+		out.append(("o", ops[">r"]))
+		out.append(("o", ops["swap"]))
+		out.append(("o", ops["r>"]))
+		out.append(("o", ops["r>"]))
+		out.append(("o", ops[">"])) # check if iterator < end value
+		out.append(("o", ops["__lit"]))
+		out.append(("r", l_start))
+		out.append(("o", ops["__cjmp"])) # if true we jump to the start
+		out.append(("o", ops["drop"])) # we drop start and end values
+		out.append(("o", ops["drop"]))
+
+		return ("b", out)
+
 	def visit_fth_number(self, node, children):
 		return ("b", [("o", ops["__lit"]), ("n", int(str(node)))])
 
@@ -210,7 +244,9 @@ if args.get("disasm") == True:
 		t, v = line
 		out = "l%4i " % i
 		if t == "n":
-			out += " v %15i" % v
+			out += " n %15i" % v
+			if v in pos_of_rev:
+				out += " (> %s)" % pos_of_rev.get(v)
 		if t == "o":
 			out += " o %15s" % ops_rev.get(v, "unknown (%i)" % v)
 		if i in pos_of_rev:
@@ -218,12 +254,7 @@ if args.get("disasm") == True:
 		print(out)
 
 # TODO
-# do
-# do?
 # variables
 # arrays
 # strings
-
-
-
 
